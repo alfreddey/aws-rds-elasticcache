@@ -90,11 +90,12 @@ Resources:
             "rules": [
               {
                 "rulePriority": 1,
-                "description": "Keep only the 10 most recent images",
+                "description": "Expire images older than 14 days",
                 "selection": {
                   "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 10
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 14
                 },
                 "action": { "type": "expire" }
               }
