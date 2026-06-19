@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CI/CD tier - ECR-driven CodePipeline, CodeDeploy ECS blue/green deployment
+  group, and an EventBridge rule that starts the pipeline on every successful
+  image push. The CodeDeploy, pipeline and trigger roles are provisioned in the
+  iam stack and passed in as ARNs. ECR, the deploy-config bucket and the app
+  OIDC role live in the bootstrap stack; this stack consumes them by name/ARN.
+
+Parameters:
+  ProjectName:
+    Type: String
+  Environment:
+    Type: String
+  ClusterName:
+    Type: String
+  ServiceName:
+    Type: String
+  EcrRepositoryName:
+    Type: String
+  AppConfigBucketName:
+    Type: String
+  ProdListenerArn:
+    Type: String
+  BlueTargetGroupName:
+    Type: String
+  GreenTargetGroupName:
+    Type: String
+  CodeDeployServiceRoleArn:
+    Type: String
+    Description: CodeDeploy service role ARN (from the iam stack)
+  PipelineRoleArn:
+    Type: String
+    Description: CodePipeline service role ARN (from the iam stack)
+  PipelineTriggerRoleArn:
+    Type: String
+    Description: EventBridge role ARN that starts the pipeline (from the iam stack)
+  ImageTag:
+    Type: String
+    Default: latest
+  ConfigObjectKey:
+    Type: String
+    Default: config.zip
+
+Resources:
+  # ---------------------------------------------------- Pipeline artifact store
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-pipeline-artifacts-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ----------------------------------------------------------------- CodeDeploy
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub "${ProjectName}-${Environment}"
+      ComputePlatform: ECS
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Sub "${ProjectName}-${Environment}-dg"
+      ServiceRoleArn: !Ref CodeDeployServiceRoleArn
+      DeploymentConfigName: CodeDeployDefault.ECSAllAtOnce
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      BlueGreenDeploymentConfiguration:
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: 5
+      ECSServices:
+        - ClusterName: !Ref ClusterName
+          ServiceName: !Ref ServiceName
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - ProdTrafficRoute:
+              ListenerArns:
+                - !Ref ProdListenerArn
+            TargetGroups:
+              - Name: !Ref BlueTargetGroupName
+              - Name: !Ref GreenTargetGroupName
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_REQUEST
+
+  # ------------------------------------------------------------------ Pipeline
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-pipeline"
+      RoleArn: !Ref PipelineRoleArn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: ImageSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: ECR
+                Version: "1"
+              Configuration:
+                RepositoryName: !Ref EcrRepositoryName
+                ImageTag: !Ref ImageTag
+              OutputArtifacts:
+                - Name: SourceImage
+              RunOrder: 1
+            - Name: ConfigSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket: !Ref AppConfigBucketName
+                S3ObjectKey: !Ref ConfigObjectKey
+                PollForSourceChanges: "false"
+              OutputArtifacts:
+                - Name: SourceConfig
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: BlueGreenDeploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeployToECS
+                Version: "1"
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+                TaskDefinitionTemplateArtifact: SourceConfig
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: SourceConfig
+                AppSpecTemplatePath: appspec.yaml
+                Image1ArtifactName: SourceImage
+                Image1ContainerName: IMAGE1_NAME
+              InputArtifacts:
+                - Name: SourceConfig
+                - Name: SourceImage
+              RunOrder: 1
+
+  # ------------------------------------- EventBridge: ECR push -> run pipeline
+  EcrPushRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-ecr-push"
+      Description: Start the deployment pipeline when a new image tag is pushed
+      EventPattern:
+        source:
+          - aws.ecr
+        detail-type:
+          - ECR Image Action
+        detail:
+          action-type:
+            - PUSH
+          result:
+            - SUCCESS
+          repository-name:
+            - !Ref EcrRepositoryName
+          image-tag:
+            - !Ref ImageTag
+      State: ENABLED
+      Targets:
+        - Id: deployment-pipeline
+          Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+          RoleArn: !Ref PipelineTriggerRoleArn
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+  CodeDeployApplicationName:
+    Value: !Ref CodeDeployApplication
+  CodeDeployDeploymentGroupName:
+    Value: !Ref CodeDeployDeploymentGroup

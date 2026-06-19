@@ -1,0 +1,17 @@
+[
+  { "ParameterKey": "ProjectName", "ParameterValue": "todo-app" },
+  { "ParameterKey": "Environment", "ParameterValue": "prod" },
+  { "ParameterKey": "TemplateBucket", "ParameterValue": "todo-app-prod-cfn-templates-123456789012" },
+  { "ParameterKey": "TemplatePrefix", "ParameterValue": "templates" },
+  { "ParameterKey": "VpcCidr", "ParameterValue": "10.0.0.0/16" },
+  { "ParameterKey": "DBName", "ParameterValue": "todos" },
+  { "ParameterKey": "DBUsername", "ParameterValue": "todoadmin" },
+  { "ParameterKey": "DBInstanceClass", "ParameterValue": "db.t3.micro" },
+  { "ParameterKey": "ContainerName", "ParameterValue": "todo-app" },
+  { "ParameterKey": "ContainerPort", "ParameterValue": "8080" },
+  { "ParameterKey": "HealthCheckPath", "ParameterValue": "/actuator/health" },
+  { "ParameterKey": "DesiredCount", "ParameterValue": "1" },
+  { "ParameterKey": "MinCapacity", "ParameterValue": "1" },
+  { "ParameterKey": "MaxCapacity", "ParameterValue": "4" },
+  { "ParameterKey": "CpuTargetUtilization", "ParameterValue": "60" }
+]

@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Data tier - Amazon RDS PostgreSQL (Multi-AZ, db.t3) in dedicated data subnets,
+  fronted by RDS Proxy, plus an ElastiCache for Redis replication group in
+  dedicated cache subnets. Master credentials are generated and stored in
+  Secrets Manager; the proxy reads them through a scoped IAM role.
+
+Parameters:
+  ProjectName:
+    Type: String
+  Environment:
+    Type: String
+  DataSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  CacheSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  RdsSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  RdsProxySecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  RedisSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DBName:
+    Type: String
+    Default: todos
+  DBUsername:
+    Type: String
+    Default: todoadmin
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+  DBEngineVersion:
+    Type: String
+    Default: "16"
+  RedisNodeType:
+    Type: String
+    Default: cache.t3.micro
+  RedisEngineVersion:
+    Type: String
+    Default: "7.1"
+
+Resources:
+  # --------------------------------------------------------------- Credentials
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}/${Environment}/rds/master"
+      Description: Master credentials for the To-Do RDS PostgreSQL instance
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${DBUsername}"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-db-secret"
+
+  # ---------------------------------------------------------------- RDS engine
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Dedicated data subnets for RDS
+      SubnetIds: !Ref DataSubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-db-subnetgroup"
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-${Environment}-pg"
+      Engine: postgres
+      EngineVersion: !Ref DBEngineVersion
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: true
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroupId
+      PubliclyAccessible: false
+      EnableIAMDatabaseAuthentication: true
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-pg"
+
+  DBSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBSecret
+      TargetId: !Ref DBInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # ----------------------------------------------------------------- RDS Proxy
+  RdsProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-db-secret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DBSecret
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "secretsmanager.${AWS::Region}.amazonaws.com"
+
+  DBProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      DBProxyName: !Sub "${ProjectName}-${Environment}-proxy"
+      EngineFamily: POSTGRESQL
+      RoleArn: !GetAtt RdsProxyRole.Arn
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref DBSecret
+          IAMAuth: DISABLED
+      RequireTLS: true
+      IdleClientTimeout: 1800
+      VpcSubnetIds: !Ref DataSubnetIds
+      VpcSecurityGroupIds:
+        - !Ref RdsProxySecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-proxy"
+
+  DBProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref DBProxy
+      TargetGroupName: default
+      DBInstanceIdentifiers:
+        - !Ref DBInstance
+      ConnectionPoolConfigurationInfo:
+        MaxConnectionsPercent: 100
+        MaxIdleConnectionsPercent: 50
+        ConnectionBorrowTimeout: 120
+
+  # --------------------------------------------------------------- ElastiCache
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Dedicated cache subnets for Redis
+      CacheSubnetGroupName: !Sub "${ProjectName}-${Environment}-redis-subnetgroup"
+      SubnetIds: !Ref CacheSubnetIds
+
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Sub "${ProjectName}-${Environment}-redis"
+      ReplicationGroupDescription: To-Do read-through cache
+      Engine: redis
+      EngineVersion: !Ref RedisEngineVersion
+      CacheNodeType: !Ref RedisNodeType
+      # Cluster mode disabled: a single primary + one replica across AZs, so the
+      # app connects to one PrimaryEndPoint (no client-side sharding needed).
+      NumCacheClusters: 2
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroupId
+      AtRestEncryptionEnabled: true
+      Port: 6379
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-redis"
+
+Outputs:
+  DBSecretArn:
+    Value: !Ref DBSecret
+  DBProxyEndpoint:
+    Value: !GetAtt DBProxy.Endpoint
+  DBName:
+    Value: !Ref DBName
+  RedisPrimaryEndpoint:
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+  RedisPort:
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port

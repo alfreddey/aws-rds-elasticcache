@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Security tier - one dedicated, least-privilege security group per resource
+  type (ALB, ECS tasks, RDS Proxy, RDS instance, ElastiCache Redis).
+  Egress is locked on the traffic-initiating tiers (ALB/ECS/Proxy) via inline
+  rules, which also removes EC2's default allow-all egress. Ingress rules are
+  standalone resources so the one-directional SG graph stays acyclic. The data
+  leaves (RDS/Redis) keep default egress - they sit in private subnets with no
+  routes out and their ingress is tightly scoped.
+
+Parameters:
+  ProjectName:
+    Type: String
+  Environment:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  ContainerPort:
+    Type: Number
+    Default: 8080
+  DBPort:
+    Type: Number
+    Default: 5432
+  RedisPort:
+    Type: Number
+    Default: 6379
+  EndpointsSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+  # Created leaf-first so inline-egress references resolve without a cycle:
+  #   RdsSg / RedisSg  ->  RdsProxySg  ->  EcsSg  ->  AlbSg
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS PostgreSQL instance
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-rds-sg"
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ElastiCache Redis cluster
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-redis-sg"
+
+  RdsProxySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS Proxy endpoint
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref DBPort
+          ToPort: !Ref DBPort
+          DestinationSecurityGroupId: !Ref RdsSecurityGroup
+          Description: RDS Proxy to RDS instance
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-rdsproxy-sg"
+
+  EcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS Fargate tasks
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref DBPort
+          ToPort: !Ref DBPort
+          DestinationSecurityGroupId: !Ref RdsProxySecurityGroup
+          Description: ECS to RDS Proxy (PostgreSQL)
+        - IpProtocol: tcp
+          FromPort: !Ref RedisPort
+          ToPort: !Ref RedisPort
+          DestinationSecurityGroupId: !Ref RedisSecurityGroup
+          Description: ECS to ElastiCache Redis
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId: !Ref EndpointsSecurityGroupId
+          Description: ECS to interface VPC endpoints (ECR/Logs/Secrets/SSM)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS egress (S3 traffic routed privately via gateway endpoint)
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-ecs-sg"
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public ALB - inbound HTTP from the internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from the internet
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          DestinationSecurityGroupId: !Ref EcsSecurityGroup
+          Description: ALB to ECS task container port
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-alb-sg"
+
+  # ----------------------------------------------- Ingress rules (standalone)
+  EcsFromAlbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Description: Container port from the ALB (serves traffic + health checks)
+
+  ProxyFromEcsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsProxySecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      SourceSecurityGroupId: !Ref EcsSecurityGroup
+      Description: PostgreSQL from ECS tasks
+
+  RdsFromProxyIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DBPort
+      ToPort: !Ref DBPort
+      SourceSecurityGroupId: !Ref RdsProxySecurityGroup
+      Description: PostgreSQL from RDS Proxy only
+
+  RedisFromEcsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref RedisPort
+      ToPort: !Ref RedisPort
+      SourceSecurityGroupId: !Ref EcsSecurityGroup
+      Description: Redis from ECS tasks only
+
+  RedisSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref RedisPort
+      ToPort: !Ref RedisPort
+      SourceSecurityGroupId: !Ref RedisSecurityGroup
+      Description: Node-to-node replication within the replication group
+
+Outputs:
+  AlbSecurityGroupId:
+    Value: !Ref AlbSecurityGroup
+  EcsSecurityGroupId:
+    Value: !Ref EcsSecurityGroup
+  RdsProxySecurityGroupId:
+    Value: !Ref RdsProxySecurityGroup
+  RdsSecurityGroupId:
+    Value: !Ref RdsSecurityGroup
+  RedisSecurityGroupId:
+    Value: !Ref RedisSecurityGroup

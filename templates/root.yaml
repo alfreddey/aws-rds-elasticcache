@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Root stack for the To-Do app platform. Orchestrates the network, security,
+  data, iam, compute and pipeline nested stacks. Deployed via CloudFormation Git
+  sync; child templates are referenced from S3 (mirrored there by the
+  sync-templates GitHub Actions workflow). ECR, the deploy-config bucket and the
+  GitHub OIDC roles are created beforehand by the bootstrap stack and consumed
+  here by naming convention.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: todo-app
+  Environment:
+    Type: String
+    Default: prod
+  TemplateBucket:
+    Type: String
+    Description: S3 bucket that mirrors the templates/ directory (from bootstrap)
+  TemplatePrefix:
+    Type: String
+    Default: templates
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  # ---- Database
+  DBName:
+    Type: String
+    Default: todos
+  DBUsername:
+    Type: String
+    Default: todoadmin
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  # ---- Application / container
+  ContainerName:
+    Type: String
+    Default: todo-app
+  ContainerPort:
+    Type: Number
+    Default: 8080
+  HealthCheckPath:
+    Type: String
+    Default: /actuator/health
+  DesiredCount:
+    Type: Number
+    Default: 1
+  MinCapacity:
+    Type: Number
+    Default: 1
+  MaxCapacity:
+    Type: Number
+    Default: 4
+  CpuTargetUtilization:
+    Type: Number
+    Default: 60
+
+Resources:
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/network.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcCidr: !Ref VpcCidr
+
+  SecurityStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/security.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        ContainerPort: !Ref ContainerPort
+        EndpointsSecurityGroupId: !GetAtt NetworkStack.Outputs.EndpointsSecurityGroupId
+
+  DataStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/data.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        DataSubnetIds: !GetAtt NetworkStack.Outputs.DataSubnetIds
+        CacheSubnetIds: !GetAtt NetworkStack.Outputs.CacheSubnetIds
+        RdsSecurityGroupId: !GetAtt SecurityStack.Outputs.RdsSecurityGroupId
+        RdsProxySecurityGroupId: !GetAtt SecurityStack.Outputs.RdsProxySecurityGroupId
+        RedisSecurityGroupId: !GetAtt SecurityStack.Outputs.RedisSecurityGroupId
+        DBName: !Ref DBName
+        DBUsername: !Ref DBUsername
+        DBInstanceClass: !Ref DBInstanceClass
+
+  IamStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/iam.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        DBSecretArn: !GetAtt DataStack.Outputs.DBSecretArn
+        AppConfigBucketName: !Sub "${ProjectName}-${Environment}-deploy-config-${AWS::AccountId}"
+
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/compute.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnetIds: !GetAtt NetworkStack.Outputs.PublicSubnetIds
+        AppSubnetIds: !GetAtt NetworkStack.Outputs.AppSubnetIds
+        AlbSecurityGroupId: !GetAtt SecurityStack.Outputs.AlbSecurityGroupId
+        EcsSecurityGroupId: !GetAtt SecurityStack.Outputs.EcsSecurityGroupId
+        EcrRepositoryUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-${Environment}"
+        ContainerName: !Ref ContainerName
+        ContainerPort: !Ref ContainerPort
+        HealthCheckPath: !Ref HealthCheckPath
+        DesiredCount: !Ref DesiredCount
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        CpuTargetUtilization: !Ref CpuTargetUtilization
+        DBProxyEndpoint: !GetAtt DataStack.Outputs.DBProxyEndpoint
+        DBName: !GetAtt DataStack.Outputs.DBName
+        DBSecretArn: !GetAtt DataStack.Outputs.DBSecretArn
+        RedisPrimaryEndpoint: !GetAtt DataStack.Outputs.RedisPrimaryEndpoint
+        RedisPort: !GetAtt DataStack.Outputs.RedisPort
+        TaskExecutionRoleArn: !GetAtt IamStack.Outputs.TaskExecutionRoleArn
+        TaskRoleArn: !GetAtt IamStack.Outputs.TaskRoleArn
+
+  PipelineStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.${AWS::Region}.amazonaws.com/${TemplateBucket}/${TemplatePrefix}/pipeline.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        Environment: !Ref Environment
+        ClusterName: !GetAtt ComputeStack.Outputs.ClusterName
+        ServiceName: !GetAtt ComputeStack.Outputs.ServiceName
+        EcrRepositoryName: !Sub "${ProjectName}-${Environment}"
+        AppConfigBucketName: !Sub "${ProjectName}-${Environment}-deploy-config-${AWS::AccountId}"
+        ProdListenerArn: !GetAtt ComputeStack.Outputs.ProdListenerArn
+        BlueTargetGroupName: !GetAtt ComputeStack.Outputs.BlueTargetGroupName
+        GreenTargetGroupName: !GetAtt ComputeStack.Outputs.GreenTargetGroupName
+        CodeDeployServiceRoleArn: !GetAtt IamStack.Outputs.CodeDeployServiceRoleArn
+        PipelineRoleArn: !GetAtt IamStack.Outputs.PipelineRoleArn
+        PipelineTriggerRoleArn: !GetAtt IamStack.Outputs.PipelineTriggerRoleArn
+
+Outputs:
+  AlbUrl:
+    Description: Public URL of the To-Do application
+    Value: !GetAtt ComputeStack.Outputs.AlbUrl
+  EcrRepositoryUri:
+    Description: Application image repository
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-${Environment}"
+  PipelineName:
+    Value: !GetAtt PipelineStack.Outputs.PipelineName
+  AppConfigBucketName:
+    Description: Upload config.zip (taskdef.json + appspec.yaml) here
+    Value: !Sub "${ProjectName}-${Environment}-deploy-config-${AWS::AccountId}"
+  # --- values the app CI reads to render taskdef.json ---
+  ClusterName:
+    Value: !GetAtt ComputeStack.Outputs.ClusterName
+  ServiceName:
+    Value: !GetAtt ComputeStack.Outputs.ServiceName
+  TaskExecutionRoleArn:
+    Value: !GetAtt IamStack.Outputs.TaskExecutionRoleArn
+  TaskRoleArn:
+    Value: !GetAtt IamStack.Outputs.TaskRoleArn
+  DBProxyEndpoint:
+    Value: !GetAtt DataStack.Outputs.DBProxyEndpoint
+  RedisPrimaryEndpoint:
+    Value: !GetAtt DataStack.Outputs.RedisPrimaryEndpoint
+  DBSecretArn:
+    Value: !GetAtt DataStack.Outputs.DBSecretArn
