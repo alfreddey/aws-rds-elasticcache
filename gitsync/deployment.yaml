@@ -15,7 +15,7 @@ parameters:
   Environment: prod
   # Output "TemplateBucketName" from the bootstrap stack, e.g.
   # todo-app-prod-cfn-templates-123456789012
-  TemplateBucket: REPLACE_WITH_BOOTSTRAP_TemplateBucketName
+  TemplateBucket: todo-app-prod-cfn-templates-183631301567
   TemplatePrefix: templates
   VpcCidr: 10.0.0.0/16
   DBName: todos
