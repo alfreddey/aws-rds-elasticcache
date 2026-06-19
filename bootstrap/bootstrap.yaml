@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  One-time bootstrap for the To-Do platform. Creates the foundational, create-
+  first resources so the application image can exist before the platform stack
+  is deployed:
+    * S3 bucket mirroring the nested-stack templates (Git sync does not package
+      nested stacks)
+    * GitHub Actions OIDC provider
+    * OIDC role for the infrastructure repo (syncs templates to S3)
+    * OIDC role for the application repo (pushes images + deploy config)
+    * ECR repository
+    * Deploy-config S3 bucket (holds appspec.yaml + taskdef.json as config.zip)
+  Deploy this once with the AWS CLI, push an initial image, then enable Git sync
+  on the root stack.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: todo-app
+  Environment:
+    Type: String
+    Default: prod
+  GitHubOrg:
+    Type: String
+    Description: GitHub org/user that owns the repositories
+  GitHubInfraRepo:
+    Type: String
+    Description: Name of THIS infrastructure repository
+  GitHubAppRepo:
+    Type: String
+    Description: Name of the application repository
+  ConfigObjectKey:
+    Type: String
+    Default: config.zip
+  ExistingOIDCProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      Leave blank to create the GitHub OIDC provider. If your account already
+      has one for token.actions.githubusercontent.com, paste its ARN here.
+
+Conditions:
+  CreateOIDCProvider: !Equals [!Ref ExistingOIDCProviderArn, ""]
+
+Resources:
+  TemplateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-cfn-templates-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  AppConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-deploy-config-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${Environment}"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only the 10 most recent images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  InfraSyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-gha-infra-sync"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOIDCProvider
+                - !Ref GitHubOIDCProvider
+                - !Ref ExistingOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubInfraRepo}:*"
+      Policies:
+        - PolicyName: sync-templates
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt TemplateBucket.Arn
+                  - !Sub "${TemplateBucket.Arn}/*"
+              - Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: "*"
+
+  GitHubActionsAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-gha-app"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOIDCProvider
+                - !Ref GitHubOIDCProvider
+                - !Ref ExistingOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubAppRepo}:*"
+      Policies:
+        - PolicyName: push-image-and-config
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPush
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt EcrRepository.Arn
+              - Sid: UploadDeployConfig
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${AppConfigBucket.Arn}/${ConfigObjectKey}"
+
+Outputs:
+  TemplateBucketName:
+    Value: !Ref TemplateBucket
+  AppConfigBucketName:
+    Value: !Ref AppConfigBucket
+  EcrRepositoryName:
+    Value: !Ref EcrRepository
+  EcrRepositoryUri:
+    Value: !GetAtt EcrRepository.RepositoryUri
+  GitHubOIDCProviderArn:
+    Value: !If
+      - CreateOIDCProvider
+      - !Ref GitHubOIDCProvider
+      - !Ref ExistingOIDCProviderArn
+  InfraSyncRoleArn:
+    Value: !GetAtt InfraSyncRole.Arn
+  GitHubActionsAppRoleArn:
+    Value: !GetAtt GitHubActionsAppRole.Arn
