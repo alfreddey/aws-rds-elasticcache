@@ -1,0 +1,45 @@
+name: Sync CloudFormation templates to S3
+
+# Mirrors templates/ to the S3 bucket that the root stack references for its
+# nested children. CloudFormation Git sync deploys the root stack on push; this
+# workflow makes sure the child templates are in S3 for that deployment.
+#
+# Repo configuration (Settings -> Secrets and variables -> Actions -> Variables):
+#   AWS_REGION           e.g. us-east-1
+#   TEMPLATE_BUCKET      bootstrap output TemplateBucketName
+#   INFRA_SYNC_ROLE_ARN  bootstrap output InfraSyncRoleArn
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "templates/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.INFRA_SYNC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Validate templates
+        run: |
+          for f in templates/*.yaml; do
+            echo "Validating $f"
+            aws cloudformation validate-template --template-body "file://$f" >/dev/null
+          done
+
+      - name: Sync templates to S3
+        run: |
+          aws s3 sync templates/ "s3://${{ vars.TEMPLATE_BUCKET }}/templates/" \
+            --delete --exact-timestamps

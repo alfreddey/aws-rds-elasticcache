@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Local env / secrets
+*.env
+.env*
+*.pem
+create-login-profile.json
+
+# Build artifacts
+*.zip
+config.zip
+
+# Diagram render output (regenerate from architecture.py)
+diagrams/*.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor
+.idea/
+.vscode/
+*.swp
