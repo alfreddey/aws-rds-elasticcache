@@ -329,5 +329,3 @@ Outputs:
     Value: !Join [",", [!Ref DataSubnet1, !Ref DataSubnet2]]
   CacheSubnetIds:
     Value: !Join [",", [!Ref CacheSubnet1, !Ref CacheSubnet2]]
-  EndpointsSecurityGroupId:
-    Value: !Ref EndpointsSecurityGroup

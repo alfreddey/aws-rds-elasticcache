@@ -75,7 +75,6 @@ Resources:
         Environment: !Ref Environment
         VpcId: !GetAtt NetworkStack.Outputs.VpcId
         ContainerPort: !Ref ContainerPort
-        EndpointsSecurityGroupId: !GetAtt NetworkStack.Outputs.EndpointsSecurityGroupId
 
   DataStack:
     Type: AWS::CloudFormation::Stack
