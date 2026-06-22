@@ -1,3 +1,32 @@
+# CloudFormation Git sync - BOOTSTRAP stack deployment file.
+#
+# Select this file when you create the one-time bootstrap stack with
+# "Sync from Git" in the CloudFormation console (or via CodeConnections).
+# It provisions the create-first resources (template + deploy-config S3
+# buckets, ECR repo, GitHub OIDC provider, and the infra/app OIDC roles)
+# that everything else depends on.
+#
+# Deploy this FIRST. Then push an initial application image and enable Git
+# sync on templates/root.yaml (see gitsync/deployment.yaml).
+
 template-file-path: bootstrap/bootstrap.yaml
-parameters: {}
-tags: {}
+
+parameters:
+  ProjectName: todo-app
+  Environment: prod
+  # GitHub org/user that owns both repositories.
+  GitHubOrg: alfreddey
+  # THIS infrastructure repository (must match the real GitHub repo name, since
+  # the OIDC trust policy is scoped to repo:${GitHubOrg}/${GitHubInfraRepo}:*).
+  GitHubInfraRepo: aws-rds-elasticcache
+  # The application repository that pushes images to ECR + uploads deploy config.
+  GitHubAppRepo: aws-rds-redis-app
+  ConfigObjectKey: config.zip
+  # ExistingOIDCProviderArn intentionally omitted -> defaults to "" so the stack
+  # CREATES the GitHub OIDC provider. If the account ever already has one, add:
+  #   ExistingOIDCProviderArn: arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com
+
+tags:
+  Project: todo-app
+  Environment: prod
+  ManagedBy: cloudformation-git-sync
