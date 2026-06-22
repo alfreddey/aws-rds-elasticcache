@@ -1,35 +1,3 @@
-# CloudFormation Git sync - stack deployment file.
-#
-# Select this file when you create the stack with "Sync from Git" in the
-# CloudFormation console (or via CodeConnections). CloudFormation watches the
-# branch and re-deploys whenever this file or any referenced template changes.
-#
-# NOTE: nested-stack children (network/security/data/iam/compute/pipeline.yaml)
-# are pulled from S3, so the sync-templates GitHub Actions workflow must have
-# mirrored templates/ into ${TemplateBucket} before/at the same push.
-
-template-file-path: templates/root.yaml
-
-parameters:
-  ProjectName: todo-app
-  Environment: prod
-  # Output "TemplateBucketName" from the bootstrap stack, e.g.
-  # todo-app-prod-cfn-templates-123456789012
-  TemplateBucket: todo-app-prod-cfn-templates-183631301567
-  TemplatePrefix: templates
-  VpcCidr: 10.0.0.0/16
-  DBName: todos
-  DBUsername: todoadmin
-  DBInstanceClass: db.t3.micro
-  ContainerName: todo-app
-  ContainerPort: 8080
-  HealthCheckPath: /actuator/health
-  DesiredCount: 1
-  MinCapacity: 1
-  MaxCapacity: 4
-  CpuTargetUtilization: 60
-
-tags:
-  Project: todo-app
-  Environment: prod
-  ManagedBy: cloudformation-git-sync
+template-file-path: bootstrap/bootstrap.yaml
+parameters: {}
+tags: {}
