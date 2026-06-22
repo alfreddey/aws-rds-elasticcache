@@ -14,6 +14,13 @@
       "portMappings": [
         { "containerPort": 8080, "protocol": "tcp" }
       ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health/liveness || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      },
       "environment": [
         { "name": "DB_HOST", "value": "<DB_PROXY_ENDPOINT>" },
         { "name": "DB_PORT", "value": "5432" },
