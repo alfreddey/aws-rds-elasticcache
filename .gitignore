@@ -11,9 +11,6 @@ create-login-profile.json
 *.zip
 config.zip
 
-# Diagram render output (regenerate from architecture.py)
-diagrams/*.png
-
 # Python cache
 __pycache__/
 *.pyc
