@@ -312,6 +312,16 @@ Resources:
       SubnetIds: [!Ref AppSubnet1, !Ref AppSubnet2]
       SecurityGroupIds: [!Ref EndpointsSecurityGroup]
 
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref AppSubnet1, !Ref AppSubnet2]
+      SecurityGroupIds: [!Ref EndpointsSecurityGroup]
+
 Outputs:
   VpcId:
     Value: !Ref Vpc
