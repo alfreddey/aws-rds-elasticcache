@@ -87,7 +87,6 @@ Resources:
       EnableIAMDatabaseAuthentication: true
       BackupRetentionPeriod: 7
       CopyTagsToSnapshot: true
-      DeletionProtection: false
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-${Environment}-pg"

@@ -164,10 +164,6 @@ Resources:
             - ContainerPort: !Ref ContainerPort
               Protocol: tcp
           HealthCheck:
-            # Container-level liveness check (BusyBox wget ships in the Alpine runtime
-            # image). Restarts the task only if the app process is broken; a DB/cache
-            # blip won't trip it. The ALB target group separately gates traffic on
-            # overall /actuator/health. StartPeriod covers Spring Boot + Flyway startup.
             Command:
               - CMD-SHELL
               - !Sub "wget -q -O /dev/null http://localhost:${ContainerPort}/actuator/health/liveness || exit 1"
