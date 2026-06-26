@@ -1,10 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  CI/CD tier - ECR-driven CodePipeline, CodeDeploy ECS blue/green deployment
-  group, and an EventBridge rule that starts the pipeline on every successful
-  image push. The CodeDeploy, pipeline and trigger roles are provisioned in the
-  iam stack and passed in as ARNs. ECR, the deploy-config bucket and the app
-  OIDC role live in the bootstrap stack; this stack consumes them by name/ARN.
+Description: CI/CD tier - ECR-driven CodePipeline with CodeDeploy ECS blue/green and an EventBridge trigger on image push.
 
 Parameters:
   ProjectName:

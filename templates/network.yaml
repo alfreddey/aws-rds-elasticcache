@@ -1,9 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  Network tier - Multi-AZ VPC with four dedicated subnet groups (public, app,
-  data, cache), an internet gateway for the public ALB tier, NAT-less private
-  routing, an S3 gateway endpoint and interface endpoints for ECR / CloudWatch
-  Logs / Secrets Manager / SSM so private workloads never need internet egress.
+Description: Network tier - Multi-AZ VPC with public/app/data/cache subnets, internet gateway, and VPC endpoints for private egress.
 
 Parameters:
   ProjectName:

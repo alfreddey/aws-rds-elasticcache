@@ -1,11 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  Security tier - one dedicated, least-privilege security group per resource
-  type (ALB, ECS tasks, RDS Proxy, RDS instance, ElastiCache Redis). Each group
-  declares its own ingress inline; egress is left at the EC2 default (allow all)
-  on every tier. The lone exception is Redis node-to-node replication, which is
-  a standalone ingress rule because a security group cannot reference itself
-  inline.
+Description: Security tier - dedicated security groups for ALB, ECS tasks, RDS Proxy, RDS, and ElastiCache Redis.
 
 Parameters:
   ProjectName:

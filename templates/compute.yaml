@@ -1,10 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  Compute tier - ECR repository, public Application Load Balancer with blue/green
-  target groups, ECS Fargate cluster/service (CodeDeploy deployment controller),
-  CloudWatch log group, and CPU-based auto scaling (1 desired / 1 min / 4 max).
-  The task + execution roles are provisioned in the iam stack and passed in as
-  ARNs. Tasks run in private app subnets only.
+Description: Compute tier - ALB, ECS Fargate with CodeDeploy blue/green, and CPU auto scaling.
 
 Parameters:
   ProjectName:

@@ -1,12 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  IAM tier - application and CI/CD service roles, centralized in one stack:
-  the ECS task + execution roles (assumed by the Fargate task definition in the
-  compute stack) and the CodeDeploy, CodePipeline and EventBridge roles (assumed
-  by the delivery pipeline). The RDS Proxy role stays in the data stack because
-  its policy references the auto-generated DB secret ARN (random suffix), which
-  cannot be reconstructed here without a circular dependency. The GitHub OIDC
-  roles live in the bootstrap stack.
+Description: IAM tier - ECS task/execution roles and CodeDeploy, CodePipeline, EventBridge service roles.
 
 Parameters:
   ProjectName:

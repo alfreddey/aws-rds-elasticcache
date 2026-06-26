@@ -1,9 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  Data tier - Amazon RDS PostgreSQL (Multi-AZ, db.t3) in dedicated data subnets,
-  fronted by RDS Proxy, plus an ElastiCache for Redis replication group in
-  dedicated cache subnets. Master credentials are generated and stored in
-  Secrets Manager; the proxy reads them through a scoped IAM role.
+Description: Data tier - RDS PostgreSQL behind RDS Proxy and ElastiCache Redis; credentials in Secrets Manager.
 
 Parameters:
   ProjectName:
