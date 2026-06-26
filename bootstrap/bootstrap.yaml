@@ -190,6 +190,10 @@ Resources:
                   - ecr:BatchGetImage
                   - ecr:GetDownloadUrlForLayer
                 Resource: !GetAtt EcrRepository.Arn
+              - Sid: ReadInfraStack
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: "*"
               - Sid: UploadDeployConfig
                 Effect: Allow
                 Action: s3:PutObject
