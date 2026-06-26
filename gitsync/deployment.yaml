@@ -28,6 +28,7 @@ parameters:
   MinCapacity: 1
   MaxCapacity: 4
   CpuTargetUtilization: 60
+  SimulatedReadDelayMs: 800
 
 tags:
   Project: todo-app
