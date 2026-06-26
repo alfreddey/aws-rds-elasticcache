@@ -62,6 +62,10 @@ Parameters:
   TaskRoleArn:
     Type: String
     Description: ECS task role ARN (from the iam stack)
+  SimulatedReadDelayMs:
+    Type: Number
+    Default: 0
+    Description: Artificial latency (ms) injected on the DB read path; 0 disables it
 
 Resources:
   # ------------------------------------------------------------------ Logging
@@ -242,6 +246,14 @@ Resources:
         TargetValue: !Ref CpuTargetUtilization
         ScaleInCooldown: 60
         ScaleOutCooldown: 60
+
+  # ---------------------------------------------------------- SSM Parameters
+  ParamSimulatedReadDelayMs:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectName}/${Environment}/simulated-read-delay-ms"
+      Type: String
+      Value: !Sub "${SimulatedReadDelayMs}"
 
 Outputs:
   AlbDNSName:

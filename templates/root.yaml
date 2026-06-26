@@ -49,6 +49,10 @@ Parameters:
   CpuTargetUtilization:
     Type: Number
     Default: 60
+  SimulatedReadDelayMs:
+    Type: Number
+    Default: 0
+    Description: Artificial latency (ms) injected on the DB read path; 0 disables it
 
 Resources:
   NetworkStack:
@@ -123,6 +127,7 @@ Resources:
         RedisPort: !GetAtt DataStack.Outputs.RedisPort
         TaskExecutionRoleArn: !GetAtt IamStack.Outputs.TaskExecutionRoleArn
         TaskRoleArn: !GetAtt IamStack.Outputs.TaskRoleArn
+        SimulatedReadDelayMs: !Ref SimulatedReadDelayMs
 
   PipelineStack:
     Type: AWS::CloudFormation::Stack

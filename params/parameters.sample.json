@@ -13,5 +13,6 @@
   { "ParameterKey": "DesiredCount", "ParameterValue": "1" },
   { "ParameterKey": "MinCapacity", "ParameterValue": "1" },
   { "ParameterKey": "MaxCapacity", "ParameterValue": "4" },
-  { "ParameterKey": "CpuTargetUtilization", "ParameterValue": "60" }
+  { "ParameterKey": "CpuTargetUtilization", "ParameterValue": "60" },
+  { "ParameterKey": "SimulatedReadDelayMs", "ParameterValue": "800" }
 ]
